@@ -35,6 +35,7 @@ struct SLIMData
   // Optional Input
   // soft constraints
   Eigen::VectorXi b;
+  Eigen::MatrixXd dimCons;
   Eigen::MatrixXd bc;
   double soft_const_p;
 
@@ -80,8 +81,9 @@ IGL_INLINE void slim_precompute(
   const Eigen::MatrixXd& V_init,
   SLIMData& data,
   SLIMData::SLIM_ENERGY slim_energy,
-  Eigen::VectorXi& b,
-  Eigen::MatrixXd& bc,
+  const Eigen::VectorXi& b,
+  const Eigen::MatrixXd& bc,
+  const Eigen::MatrixXd& dimCons,
   double soft_p);
 
 // Run iter_num iterations of SLIM

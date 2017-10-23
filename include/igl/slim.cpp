@@ -57,9 +57,7 @@ namespace igl
     IGL_INLINE void solve_weighted_arap(igl::SLIMData& s,
                                         const Eigen::MatrixXd &V,
                                         const Eigen::MatrixXi &F,
-                                        Eigen::MatrixXd &uv,
-                                        Eigen::VectorXi &soft_b_p,
-                                        Eigen::MatrixXd &soft_bc_p);
+                                        Eigen::MatrixXd &uv);
     IGL_INLINE void update_weights_and_closest_rotations( igl::SLIMData& s,
                                                           const Eigen::MatrixXd &V,
                                                           const Eigen::MatrixXi &F,
@@ -386,9 +384,7 @@ namespace igl
     IGL_INLINE void solve_weighted_arap(igl::SLIMData& s,
                                         const Eigen::MatrixXd &V,
                                         const Eigen::MatrixXi &F,
-                                        Eigen::MatrixXd &uv,
-                                        Eigen::VectorXi &soft_b_p,
-                                        Eigen::MatrixXd &soft_bc_p)
+                                        Eigen::MatrixXd &uv)
     {
       using namespace Eigen;
 
@@ -504,9 +500,11 @@ namespace igl
       {
         for (int i = 0; i < s.b.rows(); i++)
         {
-          int v_idx = s.b(i);
-          s.rhs(d * v_n + v_idx) += s.soft_const_p * s.bc(i, d); // rhs
-          L.coeffRef(d * v_n + v_idx, d * v_n + v_idx) += s.soft_const_p; // diagonal of matrix
+          if (s.dimCons(i,d)) { //Check if the dimension is constrained
+            int v_idx = s.b(i);
+            s.rhs(d * v_n + v_idx) += s.soft_const_p * s.bc(i, d); // rhs
+            L.coeffRef(d * v_n + v_idx, d * v_n + v_idx) += s.soft_const_p; // diagonal of matrix
+          }
         }
       }
     }
@@ -526,8 +524,14 @@ namespace igl
       double e = 0;
       for (int i = 0; i < s.b.rows(); i++)
       {
-        e += s.soft_const_p * (s.bc.row(i) - V_o.row(s.b(i))).squaredNorm();
+        for (int iDim = 0; iDim < s.dimCons.cols(); ++iDim) {
+          if(s.dimCons(i,iDim))
+          {
+            e += pow((s.bc(i,iDim) - V_o(s.b(i),iDim)), 2.0);
+          }
+        }
       }
+      e *= s.soft_const_p;
       return e;
     }
 
@@ -844,8 +848,9 @@ IGL_INLINE void igl::slim_precompute(
   const Eigen::MatrixXd &V_init, 
   SLIMData &data,
   SLIMData::SLIM_ENERGY slim_energy, 
-  Eigen::VectorXi &b, 
-  Eigen::MatrixXd &bc,
+  const Eigen::VectorXi &b,
+  const Eigen::MatrixXd &bc,
+  const Eigen::MatrixXd &dimCons,
   double soft_p)
 {
 
@@ -860,6 +865,7 @@ IGL_INLINE void igl::slim_precompute(
 
   data.b = b;
   data.bc = bc;
+  data.dimCons = dimCons;
   data.soft_const_p = soft_p;
 
   data.proximal_p = 0.0001;
@@ -885,7 +891,7 @@ IGL_INLINE Eigen::MatrixXd igl::slim_solve(SLIMData &data, int iter_num)
 
     // Solve Weighted Proxy
     igl::slim::update_weights_and_closest_rotations(data,data.V, data.F, dest_res);
-    igl::slim::solve_weighted_arap(data,data.V, data.F, dest_res, data.b, data.bc);
+    igl::slim::solve_weighted_arap(data,data.V, data.F, dest_res);
 
     double old_energy = data.energy;
 
