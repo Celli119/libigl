@@ -33,7 +33,8 @@
 #include <Eigen/IterativeLinearSolvers>
 #include <Eigen/SparseCholesky>
 #include <Eigen/IterativeLinearSolvers>
-
+//#include <../../../tbb/tbb.h>
+#include <../../../timer.h>
 namespace igl
 {
   namespace slim
@@ -392,9 +393,12 @@ namespace igl
     {
       using namespace Eigen;
 
+	 // Timer<> time0;
+	  //time0.beginStage("build L");
       Eigen::SparseMatrix<double> L;
       build_linear_system(s,L);
-
+	  //time0.endStage("end build L");
+	  //time0.beginStage("solve L");
       // solve
       Eigen::VectorXd Uc;
       if (s.dim == 2)
@@ -404,8 +408,13 @@ namespace igl
       }
       else
       { // seems like CG performs much worse for 2D and way better for 3D
-        Eigen::VectorXd guess(uv.rows() * s.dim);
-        for (int i = 0; i < s.v_num; i++) for (int j = 0; j < s.dim; j++) guess(uv.rows() * j + i) = uv(i, j); // flatten vector
+		  uint32_t Num_variables = uv.rows() * s.dim + s.ids_L.rows();
+		  if (s.Projection) Num_variables = uv.rows() * s.dim;
+
+        Eigen::VectorXd guess(Num_variables);
+        for (int i = 0; i < s.v_n; i++) for (int j = 0; j < s.dim; j++) guess(uv.rows() * j + i) = uv(i, j); // flatten vector
+		if(!s.Projection)
+			for (int i = 0; i < s.ids_L.rows(); i++) guess(uv.rows() * s.dim + i) = 0;//feature curve additional variable
         ConjugateGradient<Eigen::SparseMatrix<double>, Eigen::Lower | Upper> solver;
         solver.setTolerance(1e-8);
         Uc = solver.compute(L).solveWithGuess(s.rhs, guess);
@@ -413,6 +422,12 @@ namespace igl
 
       for (int i = 0; i < s.dim; i++)
         uv.col(i) = Uc.block(i * s.v_n, 0, s.v_n, 1);
+	  if (!s.Projection) {
+		  for (int i = 0; i < s.ids_L.rows(); i++)
+			  s.a_L(i) = Uc[s.dim * s.v_n + i];
+	  }
+
+	  //time0.endStage("end solve L");
     }
 
 
@@ -439,7 +454,7 @@ namespace igl
         {
           s.dim = 3;
           Eigen::SparseMatrix<double> G;
-          igl::grad(s.V, s.F, G,
+          igl::grad_ref(s.V, s.F,s.RF, G,
                     s.mesh_improvement_3d /*use normal gradient, or one from a "regular" tet*/);
           s.Dx = G.block(0, 0, s.F.rows(), s.V.rows());
           s.Dy = G.block(s.F.rows(), 0, s.F.rows(), s.V.rows());
@@ -477,38 +492,160 @@ namespace igl
 
     IGL_INLINE void build_linear_system(igl::SLIMData& s, Eigen::SparseMatrix<double> &L)
     {
+		//Timer<> time0;
+		//time0.beginStage("buildA");
+
       // formula (35) in paper
       Eigen::SparseMatrix<double> A(s.dim * s.dim * s.f_n, s.dim * s.v_n);
       buildA(s,A);
+	  //time0.endStage("end buildA");
 
-      Eigen::SparseMatrix<double> At = A.transpose();
+	  //time0.beginStage("At.makeCompresse");
+	  Eigen::SparseMatrix<double> At = A.transpose();
       At.makeCompressed();
-
+	 // time0.endStage("end At.makeCompresse");
+	  //time0.beginStage("L");
       Eigen::SparseMatrix<double> id_m(At.rows(), At.rows());
       id_m.setIdentity();
 
       // add proximal penalty
       L = At * s.WGL_M.asDiagonal() * A + s.proximal_p * id_m; //add also a proximal term
       L.makeCompressed();
+	  //time0.endStage("end L");
 
-      buildRhs(s, At);
-      Eigen::SparseMatrix<double> OldL = L;
+	  //time0.beginStage("buildRhs");
+	  buildRhs(s, At);
+	  //time0.endStage("end buildRhs");
+
+	 // time0.beginStage("add_soft_constraints");
       add_soft_constraints(s,L);
       L.makeCompressed();
+	  //time0.endStage("end add_soft_constraints");
+
     }
 
     IGL_INLINE void add_soft_constraints(igl::SLIMData& s, Eigen::SparseMatrix<double> &L)
     {
       int v_n = s.v_num;
-      for (int d = 0; d < s.dim; d++)
-      {
-        for (int i = 0; i < s.b.rows(); i++)
-        {
-          int v_idx = s.b(i);
-          s.rhs(d * v_n + v_idx) += s.soft_const_p * s.bc(i, d); // rhs
-          L.coeffRef(d * v_n + v_idx, d * v_n + v_idx) += s.soft_const_p; // diagonal of matrix
-        }
-      }
+	  //if (s.Projection) 
+	  {
+		  for (int d = 0; d < s.dim; d++)
+		  {
+			  for (int i = 0; i < s.b.rows(); i++)
+			  {
+				  int v_idx = s.b(i);
+				  if (s.Projection) {
+					  s.rhs(d * v_n + v_idx) += s.lamda_C * s.bc(i, d); // rhs
+					  L.coeffRef(d * v_n + v_idx, d * v_n + v_idx) += s.lamda_C; // diagonal of matrix
+				  }
+				  else {
+					  s.rhs(d * v_n + v_idx) += s.soft_const_p * s.bc(i, d); // rhs
+					  L.coeffRef(d * v_n + v_idx, d * v_n + v_idx) += s.soft_const_p; // diagonal of matrix
+				  }
+			  }
+		  }
+	  }
+	  {
+		  //add equality
+		  std::vector<Eigen::Triplet<double> > equality;
+		  int32_t cn = 0;
+		  for (uint32_t i = 0; i < s.Vgroups.size(); i++) cn += s.Vgroups[i].size() *(s.Vgroups[i].size() - 1) / 2;
+
+		  Eigen::VectorXd b(cn * 3), A_Tb; cn = 0;
+		  for (uint32_t i = 0; i < s.Vgroups.size(); i++) {
+			  for (uint32_t j = 0; j<s.Vgroups[i].size(); j++)
+				  for (uint32_t k = j + 1; k < s.Vgroups[i].size(); k++) {
+					  for (int d = 0; d < s.dim; d++) {
+						  equality.push_back(Eigen::Triplet<double>(s.dim * cn + d, d*s.v_num + j, 1));
+						  equality.push_back(Eigen::Triplet<double>(s.dim * cn + d, d*s.v_num + k, -1));
+						  b[s.dim * cn + d] = 0;
+					  }
+					  cn++;
+				  }
+		  }
+		  int row_num = s.dim * cn, col_num = s.dim * s.v_num;
+		  Eigen::SparseMatrix<double> A_(row_num, col_num), A_T(col_num, row_num), A_TA_(col_num, col_num);
+		  A_.setFromTriplets(equality.begin(), equality.end());
+		  A_T = A_.transpose(); A_TA_ = A_T * A_;
+		  A_Tb = A_T * b;
+
+		  L = L + s.soft_const_p * A_TA_; s.rhs = s.rhs + s.soft_const_p * A_Tb;
+	  }
+	  {//localize region
+		  for (int d = 0; d < s.dim; d++)
+		  {
+			  for (int i = 0; i < s.regionb.rows(); i++)
+			  {
+				  int v_idx = s.regionb(i);
+				  s.rhs(d * v_n + v_idx) += s.lamda_region * s.regionbc(i, d); // rhs
+				  L.coeffRef(d * v_n + v_idx, d * v_n + v_idx) += s.lamda_region; // diagonal of matrix
+			  }
+		  }
+	  }
+	  if (!s.Projection) {
+		  //add corner
+		  for (int d = 0; d < s.dim; d++)
+		  {
+			  for (int i = 0; i < s.ids_C.rows(); i++)
+			  {
+				  int v_idx = s.ids_C(i);
+				  s.rhs(d * v_n + v_idx) += s.lamda_C * s.C(i, d); // rhs
+				  L.coeffRef(d * v_n + v_idx, d * v_n + v_idx) += s.lamda_C; // diagonal of matrix
+			  }
+		  }
+		  //std::cout << "added corners  with coefficient "<< s.lamda_C << std::endl;
+		  //add tagents
+		  std::vector<Eigen::Triplet<double> > tagents;
+		  Eigen::VectorXd b(s.ids_T.rows()), A_Tb;
+		  for (int i = 0; i < s.ids_T.rows(); i++) {
+			  int vid = s.ids_T[i];
+			  tagents.push_back(Eigen::Triplet<double>(i, vid, s.normal_T(i, 0)));
+			  tagents.push_back(Eigen::Triplet<double>(i, s.v_num + vid, s.normal_T(i, 1)));
+			  tagents.push_back(Eigen::Triplet<double>(i, 2 * s.v_num + vid , s.normal_T(i, 2)));
+			  b[i] = s.dis_T[i];
+		  }
+		  int row_num = s.ids_T.rows(), col_num = 3 * s.v_num;
+		  Eigen::SparseMatrix<double> A_(row_num, col_num), A_T(col_num, row_num), A_TA_(col_num, col_num);
+		  A_.setFromTriplets(tagents.begin(), tagents.end());
+		  A_T = A_.transpose(); A_TA_ = A_T * A_;
+		  A_Tb = A_T * b;
+	
+		  L = L + s.lamda_T * A_TA_; s.rhs = s.rhs + s.lamda_T * A_Tb;
+		 // std::cout << "added tagent with coefficient "<< s.lamda_T << std::endl;
+		  //add curve
+		  std::vector<Eigen::Triplet<double> > curves;
+		  Eigen::VectorXd bl_(3 * s.ids_L.rows() + s.ids_L.rows()), Al_Tbl_;
+		  for (int i = 0; i < s.ids_L.rows(); i++) {
+			  int vid = s.ids_L[i];
+			  for (int d = 0; d < s.dim; d++) {
+				  curves.push_back(Eigen::Triplet<double>(s.dim * i + d, d * s.v_n + vid, 1.0));
+				  curves.push_back(Eigen::Triplet<double>(s.dim * i + d, s.dim * s.v_n + i, -s.Axa_L(i, d)));
+				  bl_[s.dim * i + d] = s.origin_L(i, d);
+			  }
+		  }
+		  //for (int i = 0; i < s.ids_L.rows(); i++) {
+			 // curves.push_back(Eigen::Triplet<double>(s.dim * s.ids_L.rows() + i, s.dim * s.v_n + i, 1.0));
+			 // bl_[s.dim * s.ids_L.rows() + i] = 0.0;
+		  //}
+  		  row_num = 3 * s.ids_L.rows() + s.ids_L.rows(), col_num = 3 * s.v_num + s.ids_L.rows();
+
+		  Eigen::SparseMatrix<double> Al_(row_num, col_num), Al_T(col_num, row_num), Al_TAl_(col_num, col_num);
+		  Al_.setFromTriplets(curves.begin(), curves.end());
+		  Al_T = Al_.transpose(); Al_TAl_ = Al_T * Al_;
+		  Al_Tbl_ = Al_T * bl_;
+
+		  Eigen::SparseMatrix<double> L_(col_num, col_num); 
+		  curves.clear();
+		  for (int k = 0; k<L.outerSize(); ++k)
+			  for (Eigen::SparseMatrix<double>::InnerIterator it(L, k); it; ++it)
+				  curves.push_back(Eigen::Triplet<double>(it.row(), it.col(), it.value()));
+		  L_.setFromTriplets(curves.begin(), curves.end());
+		  //L.conservativeResize(col_num, col_num);
+		  L = L_ + s.lamda_L * Al_TAl_;
+
+		  s.rhs.conservativeResizeLike(Eigen::VectorXd::Zero(col_num)); s.rhs = s.rhs + s.lamda_L * Al_Tbl_;
+		  //std::cout << "added curve with coefficient " << s.lamda_L << std::endl;
+	  }
     }
 
     IGL_INLINE double compute_energy(igl::SLIMData& s, Eigen::MatrixXd &V_new)
@@ -524,11 +661,51 @@ namespace igl
                                                 Eigen::MatrixXd &V_o)
     {
       double e = 0;
-      for (int i = 0; i < s.b.rows(); i++)
-      {
-        e += s.soft_const_p * (s.bc.row(i) - V_o.row(s.b(i))).squaredNorm();
-      }
-      return e;
+	  //if (s.Projection) 
+	  {
+		  for (int i = 0; i < s.b.rows(); i++)
+		  {
+			  if(s.Projection) e += s.lamda_T * (s.bc.row(i) - V_o.row(s.b(i))).squaredNorm();
+			  else  e += s.soft_const_p * (s.bc.row(i) - V_o.row(s.b(i))).squaredNorm();
+		  }
+	  }
+	  {
+		  //add equality
+		  for (uint32_t i = 0; i < s.Vgroups.size(); i++) {
+			  for (uint32_t j = 0; j < s.Vgroups[i].size(); j++) {
+				  for (uint32_t k = j + 1; k < s.Vgroups[i].size(); k++) {
+					  e += s.soft_const_p * (V_o.row(s.Vgroups[i][j]) - V_o.row(s.Vgroups[i][k])).squaredNorm();
+				  }
+			  }
+		  }
+	  }
+	  {//localize region
+		  for (int i = 0; i < s.regionb.rows(); i++)
+		  {
+			  e += s.lamda_region * (s.regionbc.row(i) - V_o.row(s.regionb(i))).squaredNorm();
+		  }
+	  }
+	  if (!s.Projection) {
+		  //add corner
+		  for (int i = 0; i < s.ids_C.rows(); i++)
+		  {
+			  e += s.lamda_C * (s.C.row(i) - V_o.row(s.ids_C(i))).squaredNorm();
+		  }
+		  //add tagents
+		  for (int i = 0; i < s.ids_T.rows(); i++)
+		  {
+			  double abs_dis = s.normal_T.row(i).dot(V_o.row(s.ids_T[i])) - s.dis_T[i];
+			  e += s.lamda_T * abs_dis * abs_dis;
+		  }
+		  //add curves
+		  for (int i = 0; i < s.ids_L.rows(); i++)
+		  {
+			  double abs_dis = (V_o.row(s.ids_L[i]) - s.a_L[i] * s.Axa_L.row(i) - s.origin_L.row(i)).squaredNorm();
+			  e += s.lamda_L * abs_dis;
+			  //e += s.a_L[i] * s.a_L[i];
+		  }
+	  }
+	  return e;
     }
 
     IGL_INLINE double compute_energy_with_jacobians(igl::SLIMData& s,
@@ -838,19 +1015,20 @@ namespace igl
 
 /// Slim Implementation
 
-IGL_INLINE void igl::slim_precompute(
-  const Eigen::MatrixXd &V, 
-  const Eigen::MatrixXi &F, 
-  const Eigen::MatrixXd &V_init, 
-  SLIMData &data,
-  SLIMData::SLIM_ENERGY slim_energy, 
-  Eigen::VectorXi &b, 
-  Eigen::MatrixXd &bc,
-  double soft_p)
+IGL_INLINE void igl::slim_precompute(Eigen::MatrixXd &V, Eigen::MatrixXi &F, Eigen::MatrixXd &V_init, SLIMData &data,
+                                     SLIMData::SLIM_ENERGY slim_energy, Eigen::VectorXi &b, Eigen::MatrixXd &bc,
+	Eigen::VectorXi &ids_C_, Eigen::MatrixXd &C_,
+	Eigen::VectorXi &ids_L_, Eigen::MatrixXd &Axa_L_, Eigen::MatrixXd &Origin_L_,
+	Eigen::VectorXi &ids_T_, Eigen::MatrixXd &normal_T_, Eigen::VectorXd &dis_T_, 
+	Eigen::VectorXi &regionb, Eigen::MatrixXd &regionbc,
+	bool surface_projection, bool global_opt,
+	std::vector<Eigen::MatrixXd> RF
+)
 {
 
   data.V = V;
   data.F = F;
+  data.RF = RF;
   data.V_o = V_init;
 
   data.v_num = V.rows();
@@ -860,14 +1038,33 @@ IGL_INLINE void igl::slim_precompute(
 
   data.b = b;
   data.bc = bc;
-  data.soft_const_p = soft_p;
+ //data.soft_const_p = soft_p;
+  
+ //feature constraints
+  data.ids_C = ids_C_;
+  data.C = C_;
+  data.ids_T = ids_T_;
+  data.normal_T = normal_T_;
+  data.dis_T = dis_T_;
+  data.ids_L = ids_L_;
+  data.Axa_L = Axa_L_;
+  data.origin_L = Origin_L_;
+  data.a_L.resize(data.ids_L.rows()); data.a_L.setZero();
+//region
+  data.regionb = regionb;
+  data.regionbc = regionbc;
+
+
+  data.Projection = surface_projection;
+  data.Global = global_opt;
 
   data.proximal_p = 0.0001;
 
   igl::doublearea(V, F, data.M);
   data.M /= 2.;
   data.mesh_area = data.M.sum();
-  data.mesh_improvement_3d = false; // whether to use a jacobian derived from a real mesh or an abstract regular mesh (used for mesh improvement)
+  if(global_opt)  data.mesh_improvement_3d = true;
+  else data.mesh_improvement_3d = false; // whether to use a jacobian derived from a real mesh or an abstract regular mesh (used for mesh improvement)
   data.exp_factor = 1.0; // param used only for exponential energies (e.g exponential symmetric dirichlet)
 
   assert (F.cols() == 3 || F.cols() == 4);
@@ -875,6 +1072,7 @@ IGL_INLINE void igl::slim_precompute(
   igl::slim::pre_calc(data);
   data.energy = igl::slim::compute_energy(data,data.V_o) / data.mesh_area;
 }
+
 
 IGL_INLINE Eigen::MatrixXd igl::slim_solve(SLIMData &data, int iter_num)
 {
@@ -884,20 +1082,22 @@ IGL_INLINE Eigen::MatrixXd igl::slim_solve(SLIMData &data, int iter_num)
     dest_res = data.V_o;
 
     // Solve Weighted Proxy
+	Timer<> time0, time1, time2;
+	//time0.beginStage("update weight");
     igl::slim::update_weights_and_closest_rotations(data,data.V, data.F, dest_res);
+	//time0.endStage("end update weight");
+	//time0.beginStage("solve weight");
     igl::slim::solve_weighted_arap(data,data.V, data.F, dest_res, data.b, data.bc);
+	//time0.endStage("end solve weight");
 
     double old_energy = data.energy;
-
+	//time2.beginStage(" flip_avoiding");
     std::function<double(Eigen::MatrixXd &)> compute_energy = [&](
         Eigen::MatrixXd &aaa) { return igl::slim::compute_energy(data,aaa); };
 
     data.energy = igl::flip_avoiding_line_search(data.F, data.V_o, dest_res, compute_energy,
                                                  data.energy * data.mesh_area) / data.mesh_area;
+	//time2.endStage("end flip_avoiding");
   }
   return data.V_o;
 }
-
-#ifdef IGL_STATIC_LIBRARY
-// Explicit template instantiation
-#endif
