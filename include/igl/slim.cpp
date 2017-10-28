@@ -556,8 +556,8 @@ namespace igl
 			  for (uint32_t j = 0; j<s.Vgroups[i].size(); j++)
 				  for (uint32_t k = j + 1; k < s.Vgroups[i].size(); k++) {
 					  for (int d = 0; d < s.dim; d++) {
-						  equality.push_back(Eigen::Triplet<double>(s.dim * cn + d, d*s.v_num + j, 1));
-						  equality.push_back(Eigen::Triplet<double>(s.dim * cn + d, d*s.v_num + k, -1));
+						  equality.emplace_back(s.dim * cn + d, d*s.v_num + j, 1);
+						  equality.emplace_back(s.dim * cn + d, d*s.v_num + k, -1);
 						  b[s.dim * cn + d] = 0;
 					  }
 					  cn++;
@@ -599,9 +599,9 @@ namespace igl
 		  Eigen::VectorXd b(s.ids_T.rows()), A_Tb;
 		  for (int i = 0; i < s.ids_T.rows(); i++) {
 			  int vid = s.ids_T[i];
-			  tagents.push_back(Eigen::Triplet<double>(i, vid, s.normal_T(i, 0)));
-			  tagents.push_back(Eigen::Triplet<double>(i, s.v_num + vid, s.normal_T(i, 1)));
-			  tagents.push_back(Eigen::Triplet<double>(i, 2 * s.v_num + vid , s.normal_T(i, 2)));
+			  tagents.emplace_back(i, vid, s.normal_T(i, 0));
+			  tagents.emplace_back(i, s.v_num + vid, s.normal_T(i, 1));
+			  tagents.emplace_back(i, 2 * s.v_num + vid , s.normal_T(i, 2));
 			  b[i] = s.dis_T[i];
 		  }
 		  int row_num = s.ids_T.rows(), col_num = 3 * s.v_num;
@@ -618,8 +618,8 @@ namespace igl
 		  for (int i = 0; i < s.ids_L.rows(); i++) {
 			  int vid = s.ids_L[i];
 			  for (int d = 0; d < s.dim; d++) {
-				  curves.push_back(Eigen::Triplet<double>(s.dim * i + d, d * s.v_n + vid, 1.0));
-				  curves.push_back(Eigen::Triplet<double>(s.dim * i + d, s.dim * s.v_n + i, -s.Axa_L(i, d)));
+				  curves.emplace_back(s.dim * i + d, d * s.v_n + vid, 1.0);
+				  curves.emplace_back(s.dim * i + d, s.dim * s.v_n + i, -s.Axa_L(i, d));
 				  bl_[s.dim * i + d] = s.origin_L(i, d);
 			  }
 		  }
@@ -638,7 +638,7 @@ namespace igl
 		  curves.clear();
 		  for (int k = 0; k<L.outerSize(); ++k)
 			  for (Eigen::SparseMatrix<double>::InnerIterator it(L, k); it; ++it)
-				  curves.push_back(Eigen::Triplet<double>(it.row(), it.col(), it.value()));
+				  curves.emplace_back(it.row(), it.col(), it.value());
 		  L_.setFromTriplets(curves.begin(), curves.end());
 		  //L.conservativeResize(col_num, col_num);
 		  L = L_ + s.lamda_L * Al_TAl_;
@@ -854,11 +854,11 @@ namespace igl
             int dx_c = it.col();
             double val = it.value();
 
-            IJV.push_back(Eigen::Triplet<double>(dx_r, dx_c, val * s.W_11(dx_r)));
-            IJV.push_back(Eigen::Triplet<double>(dx_r, s.v_n + dx_c, val * s.W_12(dx_r)));
+            IJV.emplace_back(dx_r, dx_c, val * s.W_11(dx_r));
+            IJV.emplace_back(dx_r, s.v_n + dx_c, val * s.W_12(dx_r));
 
-            IJV.push_back(Eigen::Triplet<double>(2 * s.f_n + dx_r, dx_c, val * s.W_21(dx_r)));
-            IJV.push_back(Eigen::Triplet<double>(2 * s.f_n + dx_r, s.v_n + dx_c, val * s.W_22(dx_r)));
+            IJV.emplace_back(2 * s.f_n + dx_r, dx_c, val * s.W_21(dx_r));
+            IJV.emplace_back(2 * s.f_n + dx_r, s.v_n + dx_c, val * s.W_22(dx_r));
           }
         }
 
@@ -870,11 +870,11 @@ namespace igl
             int dy_c = it.col();
             double val = it.value();
 
-            IJV.push_back(Eigen::Triplet<double>(s.f_n + dy_r, dy_c, val * s.W_11(dy_r)));
-            IJV.push_back(Eigen::Triplet<double>(s.f_n + dy_r, s.v_n + dy_c, val * s.W_12(dy_r)));
+            IJV.emplace_back(s.f_n + dy_r, dy_c, val * s.W_11(dy_r));
+            IJV.emplace_back(s.f_n + dy_r, s.v_n + dy_c, val * s.W_12(dy_r));
 
-            IJV.push_back(Eigen::Triplet<double>(3 * s.f_n + dy_r, dy_c, val * s.W_21(dy_r)));
-            IJV.push_back(Eigen::Triplet<double>(3 * s.f_n + dy_r, s.v_n + dy_c, val * s.W_22(dy_r)));
+            IJV.emplace_back(3 * s.f_n + dy_r, dy_c, val * s.W_21(dy_r));
+            IJV.emplace_back(3 * s.f_n + dy_r, s.v_n + dy_c, val * s.W_22(dy_r));
           }
         }
       }
@@ -899,17 +899,17 @@ namespace igl
             int dx_c = it.col();
             double val = it.value();
 
-            IJV.push_back(Eigen::Triplet<double>(dx_r, dx_c, val * s.W_11(dx_r)));
-            IJV.push_back(Eigen::Triplet<double>(dx_r, s.v_n + dx_c, val * s.W_12(dx_r)));
-            IJV.push_back(Eigen::Triplet<double>(dx_r, 2 * s.v_n + dx_c, val * s.W_13(dx_r)));
+            IJV.emplace_back(dx_r, dx_c, val * s.W_11(dx_r));
+            IJV.emplace_back(dx_r, s.v_n + dx_c, val * s.W_12(dx_r));
+            IJV.emplace_back(dx_r, 2 * s.v_n + dx_c, val * s.W_13(dx_r));
 
-            IJV.push_back(Eigen::Triplet<double>(3 * s.f_n + dx_r, dx_c, val * s.W_21(dx_r)));
-            IJV.push_back(Eigen::Triplet<double>(3 * s.f_n + dx_r, s.v_n + dx_c, val * s.W_22(dx_r)));
-            IJV.push_back(Eigen::Triplet<double>(3 * s.f_n + dx_r, 2 * s.v_n + dx_c, val * s.W_23(dx_r)));
+            IJV.emplace_back(3 * s.f_n + dx_r, dx_c, val * s.W_21(dx_r));
+            IJV.emplace_back(3 * s.f_n + dx_r, s.v_n + dx_c, val * s.W_22(dx_r));
+            IJV.emplace_back(3 * s.f_n + dx_r, 2 * s.v_n + dx_c, val * s.W_23(dx_r));
 
-            IJV.push_back(Eigen::Triplet<double>(6 * s.f_n + dx_r, dx_c, val * s.W_31(dx_r)));
-            IJV.push_back(Eigen::Triplet<double>(6 * s.f_n + dx_r, s.v_n + dx_c, val * s.W_32(dx_r)));
-            IJV.push_back(Eigen::Triplet<double>(6 * s.f_n + dx_r, 2 * s.v_n + dx_c, val * s.W_33(dx_r)));
+            IJV.emplace_back(6 * s.f_n + dx_r, dx_c, val * s.W_31(dx_r));
+            IJV.emplace_back(6 * s.f_n + dx_r, s.v_n + dx_c, val * s.W_32(dx_r));
+            IJV.emplace_back(6 * s.f_n + dx_r, 2 * s.v_n + dx_c, val * s.W_33(dx_r));
           }
         }
 
@@ -921,17 +921,17 @@ namespace igl
             int dy_c = it.col();
             double val = it.value();
 
-            IJV.push_back(Eigen::Triplet<double>(s.f_n + dy_r, dy_c, val * s.W_11(dy_r)));
-            IJV.push_back(Eigen::Triplet<double>(s.f_n + dy_r, s.v_n + dy_c, val * s.W_12(dy_r)));
-            IJV.push_back(Eigen::Triplet<double>(s.f_n + dy_r, 2 * s.v_n + dy_c, val * s.W_13(dy_r)));
+            IJV.emplace_back(s.f_n + dy_r, dy_c, val * s.W_11(dy_r));
+            IJV.emplace_back(s.f_n + dy_r, s.v_n + dy_c, val * s.W_12(dy_r));
+            IJV.emplace_back(s.f_n + dy_r, 2 * s.v_n + dy_c, val * s.W_13(dy_r));
 
-            IJV.push_back(Eigen::Triplet<double>(4 * s.f_n + dy_r, dy_c, val * s.W_21(dy_r)));
-            IJV.push_back(Eigen::Triplet<double>(4 * s.f_n + dy_r, s.v_n + dy_c, val * s.W_22(dy_r)));
-            IJV.push_back(Eigen::Triplet<double>(4 * s.f_n + dy_r, 2 * s.v_n + dy_c, val * s.W_23(dy_r)));
+            IJV.emplace_back(4 * s.f_n + dy_r, dy_c, val * s.W_21(dy_r));
+            IJV.emplace_back(4 * s.f_n + dy_r, s.v_n + dy_c, val * s.W_22(dy_r));
+            IJV.emplace_back(4 * s.f_n + dy_r, 2 * s.v_n + dy_c, val * s.W_23(dy_r));
 
-            IJV.push_back(Eigen::Triplet<double>(7 * s.f_n + dy_r, dy_c, val * s.W_31(dy_r)));
-            IJV.push_back(Eigen::Triplet<double>(7 * s.f_n + dy_r, s.v_n + dy_c, val * s.W_32(dy_r)));
-            IJV.push_back(Eigen::Triplet<double>(7 * s.f_n + dy_r, 2 * s.v_n + dy_c, val * s.W_33(dy_r)));
+            IJV.emplace_back(7 * s.f_n + dy_r, dy_c, val * s.W_31(dy_r));
+            IJV.emplace_back(7 * s.f_n + dy_r, s.v_n + dy_c, val * s.W_32(dy_r));
+            IJV.emplace_back(7 * s.f_n + dy_r, 2 * s.v_n + dy_c, val * s.W_33(dy_r));
           }
         }
 
@@ -943,17 +943,17 @@ namespace igl
             int dz_c = it.col();
             double val = it.value();
 
-            IJV.push_back(Eigen::Triplet<double>(2 * s.f_n + dz_r, dz_c, val * s.W_11(dz_r)));
-            IJV.push_back(Eigen::Triplet<double>(2 * s.f_n + dz_r, s.v_n + dz_c, val * s.W_12(dz_r)));
+            IJV.emplace_back(2 * s.f_n + dz_r, dz_c, val * s.W_11(dz_r));
+            IJV.emplace_back(2 * s.f_n + dz_r, s.v_n + dz_c, val * s.W_12(dz_r));
             IJV.push_back(Eigen::Triplet<double>(2 * s.f_n + dz_r, 2 * s.v_n + dz_c, val * s.W_13(dz_r)));
 
-            IJV.push_back(Eigen::Triplet<double>(5 * s.f_n + dz_r, dz_c, val * s.W_21(dz_r)));
-            IJV.push_back(Eigen::Triplet<double>(5 * s.f_n + dz_r, s.v_n + dz_c, val * s.W_22(dz_r)));
-            IJV.push_back(Eigen::Triplet<double>(5 * s.f_n + dz_r, 2 * s.v_n + dz_c, val * s.W_23(dz_r)));
+            IJV.emplace_back(5 * s.f_n + dz_r, dz_c, val * s.W_21(dz_r));
+            IJV.emplace_back(5 * s.f_n + dz_r, s.v_n + dz_c, val * s.W_22(dz_r));
+            IJV.emplace_back(5 * s.f_n + dz_r, 2 * s.v_n + dz_c, val * s.W_23(dz_r));
 
-            IJV.push_back(Eigen::Triplet<double>(8 * s.f_n + dz_r, dz_c, val * s.W_31(dz_r)));
-            IJV.push_back(Eigen::Triplet<double>(8 * s.f_n + dz_r, s.v_n + dz_c, val * s.W_32(dz_r)));
-            IJV.push_back(Eigen::Triplet<double>(8 * s.f_n + dz_r, 2 * s.v_n + dz_c, val * s.W_33(dz_r)));
+            IJV.emplace_back(8 * s.f_n + dz_r, dz_c, val * s.W_31(dz_r));
+            IJV.emplace_back(8 * s.f_n + dz_r, s.v_n + dz_c, val * s.W_32(dz_r));
+            IJV.emplace_back(8 * s.f_n + dz_r, 2 * s.v_n + dz_c, val * s.W_33(dz_r));
           }
         }
       }
